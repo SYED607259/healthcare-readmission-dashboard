@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from database import authenticate_user, create_database, create_user
+from data_loader import load_dashboard_data
 
 
 st.set_page_config(
@@ -373,7 +374,7 @@ if "user" not in st.session_state:
     login_screen()
     st.stop()
 
-data = build_demo_data()
+data = load_dashboard_data(build_demo_data())
 
 with st.sidebar:
     st.title("CareSignal")
@@ -577,7 +578,11 @@ with population:
 
 with patient_view:
     st.subheader("Patient risk profile")
-    patient_ids = filtered.sort_values("risk_score", ascending=False)["patient_id"].tolist()
+    patient_ids = (
+        filtered.sort_values("risk_score", ascending=False)["patient_id"]
+        .drop_duplicates()
+        .tolist()
+    )
     selected_patient = st.selectbox("Select patient", patient_ids)
     patient = filtered.loc[filtered["patient_id"] == selected_patient].iloc[0]
     st.markdown(
@@ -624,18 +629,19 @@ with methodology:
     st.subheader("Analytical approach")
     st.markdown(
         """
-        This portfolio dashboard uses a reproducible synthetic dataset of inpatient encounters.
-        The risk score is generated from clinically plausible operational factors: age, previous
+        This portfolio dashboard loads the Data Engineering pipeline's Gold extract when it is
+        available and otherwise uses a reproducible synthetic fallback. The risk score is generated
+        from clinically plausible operational factors: age, previous
         admissions, chronic-condition count, length of stay, emergency admission, follow-up
         status, diagnosis group, and discharge disposition.
 
         **Workflow demonstrated**
 
-        1. Generate and validate encounter-level data with Python and pandas.
-        2. Engineer operational risk factors and calculate a transparent propensity score.
-        3. Segment patients into low, medium, and high-risk cohorts.
-        4. Monitor readmission trends, compare facilities, and prioritize follow-up work.
-        5. Export the filtered care-management queue for downstream action.
+        1. Generate a deterministic synthetic Bronze extract with Python and pandas.
+        2. Validate and transform records into Silver Parquet with PySpark.
+        3. Build Gold fact, dimension, mart, and dashboard tables.
+        4. Segment patients into low, medium, and high-risk cohorts.
+        5. Monitor trends, compare facilities, and export the filtered work queue.
 
         **Important:** All records are synthetic. The score is an educational demonstration,
         not a validated clinical model and not intended to guide patient care.

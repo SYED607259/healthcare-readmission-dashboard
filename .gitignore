@@ -5,6 +5,16 @@ caresignal.db
 .venv/
 venv/
 .env
+.pytest_cache/
+.ruff_cache/
+.sparkStaging/
+metastore_db/
+derby.log
+logs/
+data/bronze/
+data/silver/
+data/gold/
+data/manifests/
 .DS_Store
 Thumbs.db
 
