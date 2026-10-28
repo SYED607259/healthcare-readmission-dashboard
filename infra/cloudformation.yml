@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CareSignal hospital readmission data lake, Glue ETL job, crawler, and Athena workgroup.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: caresignal-readmission
+    AllowedPattern: "[a-z0-9-]+"
+  DatabaseName:
+    Type: String
+    Default: caresignal_readmission_analytics
+    AllowedPattern: "[a-z0-9_]+"
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteTemporaryFiles
+            Status: Enabled
+            Prefix: temporary/
+            ExpirationInDays: 7
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref DatabaseName
+        Description: Gold-layer tables for the simulated readmission portfolio project.
+
+  GlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-glue-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: ProjectBucketAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !GetAtt DataBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${DataBucket.Arn}/*"
+
+  ReadmissionGlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${ProjectName}-etl"
+      Description: PySpark Bronze-to-Silver-to-Gold hospital readmission pipeline.
+      Role: !GetAtt GlueServiceRole.Arn
+      GlueVersion: "5.1"
+      Command:
+        Name: glueetl
+        PythonVersion: "3"
+        ScriptLocation: !Sub "s3://${DataBucket}/scripts/spark_job.py"
+      DefaultArguments:
+        "--job-language": python
+        "--enable-metrics": "true"
+        "--enable-continuous-cloudwatch-log": "true"
+        "--input_path": !Sub "s3://${DataBucket}/bronze/encounters/"
+        "--output_path": !Sub "s3://${DataBucket}"
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      MaxRetries: 1
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+      Timeout: 20
+
+  GoldCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub "${ProjectName}-gold-crawler"
+      Role: !GetAtt GlueServiceRole.Arn
+      DatabaseName: !Ref GlueDatabase
+      TablePrefix: caresignal_
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${DataBucket}/gold/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "${ProjectName}-workgroup"
+      Description: Athena workgroup for the CareSignal portfolio pipeline.
+      State: ENABLED
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        PublishCloudWatchMetricsEnabled: true
+        ResultConfiguration:
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+          OutputLocation: !Sub "s3://${DataBucket}/athena-results/"
+
+Outputs:
+  DataBucketName:
+    Value: !Ref DataBucket
+  GlueJobName:
+    Value: !Ref ReadmissionGlueJob
+  GlueCrawlerName:
+    Value: !Ref GoldCrawler
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+  AthenaWorkGroupName:
+    Value: !Ref AthenaWorkGroup
+
